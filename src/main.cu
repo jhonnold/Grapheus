@@ -213,7 +213,7 @@ struct BerserkModel : ChessModel {
     SparseInput* in2;
 
     const float  sigmoid_scale = 1.0 / 160.0;
-    const float  quant_one     = 64.0;
+    const float  quant_one     = 16.0;
     const float  quant_two     = 32.0;
     const float  nnue_scale    = 256.0;
 
@@ -245,7 +245,7 @@ struct BerserkModel : ChessModel {
         set_loss(MPE {2.5, true});
 
         // Steady LR decay
-        set_lr_schedule(StepDecayLRSchedule {1e-3, 0.992, 1});
+        set_lr_schedule(StepDecayLRSchedule {1e-3, 0.025, 600});
 
         const float hidden_max = 127.0 / quant_two;
 
@@ -261,7 +261,7 @@ struct BerserkModel : ChessModel {
                            0.999,
                            1e-7));
 
-        set_file_output("C:/Programming/berserk-nets/exp1/");
+        set_file_output("C:/Programming/berserk-nets/exp2/");
 
         add_quantization(Quantizer {
             "" + std::to_string((int) quant_one) + "_" + std::to_string((int) quant_two),
@@ -269,11 +269,11 @@ struct BerserkModel : ChessModel {
             QuantizerEntry<int16_t>(&ft->weights.values, quant_one, true),
             QuantizerEntry<int16_t>(&ft->bias.values, quant_one),
             QuantizerEntry<int8_t>(&l1->weights.values, quant_two),
-            QuantizerEntry<int32_t>(&l1->bias.values, quant_two),
+            QuantizerEntry<int32_t>(&l1->bias.values, quant_one * quant_two),
             QuantizerEntry<float>(&l2->weights.values, 1.0),
-            QuantizerEntry<float>(&l2->bias.values, quant_two),
-            QuantizerEntry<float>(&cp_eval->weights.values, nnue_scale / quant_two),
-            QuantizerEntry<float>(&cp_eval->bias.values, nnue_scale),
+            QuantizerEntry<float>(&l2->bias.values, quant_one * quant_two),
+            QuantizerEntry<float>(&cp_eval->weights.values, nnue_scale / quant_one),
+            QuantizerEntry<float>(&cp_eval->bias.values, nnue_scale * quant_two),
         });
         set_save_frequency(10);
     }
@@ -390,7 +390,7 @@ int main() {
     validation_loader.start();
 
     BerserkModel model {};
-    model.train(loader, validation_loader, 600, 1e8, 1e7);
+    model.train(loader, validation_loader, 800, 1e8, 1e7);
 
     loader.kill();
     validation_loader.kill();

@@ -2,6 +2,7 @@
 
 #include <cstdarg>
 #include <fstream>
+#include <iostream>
 
 struct CSVWriter {
     std::ofstream csv_file {};
@@ -15,7 +16,7 @@ struct CSVWriter {
 
     void open(std::string res, char separator = ',') {
         this->separator = separator;
-        csv_file.open(res);
+        csv_file.open(res, std::ios_base::app);
     }
 
     void close() {
