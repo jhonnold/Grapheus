@@ -19,20 +19,9 @@ struct AdamWarmup : public Adam {
 
     protected:
     void step(OptimizerEntry& entry, int idx, float lr) override {
-        operations::adam_w<data::GPU>(entry.m_reference->values,
-                                      entry.m_reference->gradients,
-                                      first_moment[idx],
-                                      second_moment[idx],
-                                      lr,
-                                      beta1,
-                                      beta2,
-                                      eps,
-                                      warmup,
-                                      step_,
-                                      entry.m_min,
-                                      entry.m_max,
-                                      entry.m_lasso,
-                                      entry.m_ridge);
+        float slr = warmup > step_ ? 1e-8 + step_ * lr / warmup : lr;
+
+        Adam::step(entry, idx, slr);
     }
 };
 

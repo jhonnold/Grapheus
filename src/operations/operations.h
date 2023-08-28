@@ -31,4 +31,3 @@
 #include "mean_power_error/mpe.h"
 
 #include "adam/adam.h"
-#include "adam/adam_w.h"
