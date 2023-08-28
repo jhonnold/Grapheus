@@ -21,14 +21,14 @@ inline void fill(data::DenseMatrix<TYPE>& matrix, TYPE value) {
 }
 
 template <typename TYPE>
-inline void kaiming(data::DenseMatrix<TYPE>& matrix, size_t expected_inputs) {
+inline void kaiming(data::DenseMatrix<TYPE>& matrix, size_t expected_inputs, float scalar = 1.0) {
     std::uniform_real_distribution<> dis(0.0, 1.0);
 
     for (size_t i = 0; i < matrix.m; i++) {
         for (size_t j = 0; j < matrix.n; j++) {
             auto r1 = dis(twister), r2 = dis(twister);
             auto r = std::sqrt(-2.0 * std::log(r1)) * std::cos(2 * std::_Pi * r2);
-            matrix.get(i, j) = r * std::sqrt(2.0 / expected_inputs);
+            matrix.get(i, j) = r * std::sqrt(2.0 / expected_inputs) * scalar;
         }
     }
 }
