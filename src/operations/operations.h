@@ -31,3 +31,4 @@
 #include "mean_power_error/mpe.h"
 
 #include "adam/adam.h"
+#include "ranger/ranger.h"

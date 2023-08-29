@@ -17,7 +17,8 @@ using namespace data;
 struct ChessModel : nn::Model {
 
     // seting inputs
-    virtual void setup_inputs_and_outputs(dataset::DataSet<chess::Position>* positions) = 0;
+    virtual void setup_inputs_and_outputs(dataset::DataSet<chess::Position>* positions,
+                                          const float                        lambda = 0.5) = 0;
 
     // train function
     void train(dataset::BatchLoader<chess::Position>& loader,
@@ -213,8 +214,6 @@ struct ChessModel : nn::Model {
 struct BerserkModel : ChessModel {
     SparseInput* in1;
     SparseInput* in2;
-    SparseInput* psqt1;
-    SparseInput* psqt2;
 
     const float  sigmoid_scale = 1.0 / 160.0;
     const float  quant_one     = 64.0;
@@ -229,69 +228,45 @@ struct BerserkModel : ChessModel {
     BerserkModel()
         : ChessModel() {
 
-        in1           = add<SparseInput>(n_features, 32);
-        in2           = add<SparseInput>(n_features, 32);
-        psqt1         = add<SparseInput>(n_features, 32);
-        psqt2         = add<SparseInput>(n_features, 32);
+        in1          = add<SparseInput>(n_features, 32);
+        in2          = add<SparseInput>(n_features, 32);
 
-        auto ft       = add<FeatureTransformer>(in1, in2, n_ft);
-        auto fta      = add<ReLU>(ft);
+        auto ft      = add<FeatureTransformer>(in1, in2, n_ft);
+        auto fta     = add<ReLU>(ft);
 
-        auto l1       = add<Affine>(fta, n_l1);
-        auto l1a      = add<ReLU>(l1);
+        auto l1      = add<Affine>(fta, n_l1);
+        auto l1a     = add<ReLU>(l1);
 
-        auto l2       = add<Affine>(l1a, n_l2);
-        auto l2a      = add<ReLU>(l2);
+        auto l2      = add<Affine>(l1a, n_l2);
+        auto l2a     = add<ReLU>(l2);
 
-        auto pos_eval = add<Affine>(l2a, n_out);
-
-        auto psqt_ft  = add<FeatureTransformer>(psqt1, psqt2, 1);
-        auto psqt_sp  = add<Split>(psqt_ft, 1);
-        auto pc_eval  = add<WeightedSum>(&psqt_sp->heads[0], &psqt_sp->heads[1], 0.5, -0.5);
-
-        auto cp_eval  = add<WeightedSum>(pc_eval, pos_eval, 1, 1);
-        auto sigmoid  = add<Sigmoid>(cp_eval, sigmoid_scale);
-
-        // ---------------------------------------------------------------------------
-        constexpr float piece_val[6] = {60, 375, 395, 615, 1220, 0};
-        for (int kingsq = 0; kingsq <= 64; kingsq++) {
-            for (int sq = 0; sq <= 64; sq++) {
-                for (int pc = chess::PAWN; pc <= chess::QUEEN; pc++) {
-                    int idxw = index(sq, chess::piece(chess::WHITE, pc), kingsq, chess::WHITE);
-                    int idxb = index(sq, chess::piece(chess::BLACK, pc), kingsq, chess::WHITE);
-
-                    psqt_ft->weights.values(0, idxw) = piece_val[pc];
-                    psqt_ft->weights.values(0, idxb) = -piece_val[pc];
-                }
-            }
-        }
-
-        psqt_ft->weights.values >> data::GPU;
-        // ---------------------------------------------------------------------------
+        auto cp_eval = add<Affine>(l2a, n_out);
+        auto sigmoid = add<Sigmoid>(cp_eval, sigmoid_scale);
 
         // Mean power error
         set_loss(MPE {2.5, true});
 
         // Steady LR decay
-        set_lr_schedule(StepDecayLRSchedule {5e-3, 0.025, 1000});
+        set_lr_schedule(StepDecayLRSchedule {2.5e-2, 0.3, 100});
 
         const float hidden_max = 127.0 / quant_two;
 
-        add_optimizer(AdamWarmup({{OptimizerEntry {&ft->weights}},
-                                  {OptimizerEntry {&ft->bias}},
-                                  {OptimizerEntry {&l1->weights}.clamp(-hidden_max, hidden_max)},
-                                  {OptimizerEntry {&l1->bias}},
-                                  {OptimizerEntry {&l2->weights}},
-                                  {OptimizerEntry {&l2->bias}},
-                                  {OptimizerEntry {&pos_eval->weights}},
-                                  {OptimizerEntry {&pos_eval->bias}},
-                                  {OptimizerEntry {&psqt_ft->weights}}},
-                                 0.95,
-                                 0.999,
-                                 1e-8,
-                                 16384 * 5));
+        add_optimizer(Ranger({{OptimizerEntry {&ft->weights}},
+                              {OptimizerEntry {&ft->bias}},
+                              {OptimizerEntry {&l1->weights}.clamp(-hidden_max, hidden_max)},
+                              {OptimizerEntry {&l1->bias}},
+                              {OptimizerEntry {&l2->weights}},
+                              {OptimizerEntry {&l2->bias}},
+                              {OptimizerEntry {&cp_eval->weights}},
+                              {OptimizerEntry {&cp_eval->bias}}},
+                             0.95,
+                             0.999,
+                             1e-5,
+                             0.5,
+                             6,
+                             6));
 
-        set_file_output("C:/Programming/berserk-nets/exp3/");
+        set_file_output("C:/Programming/berserk-nets/exp5/");
 
         add_quantization(Quantizer {
             "" + std::to_string((int) quant_one) + "_" + std::to_string((int) quant_two),
@@ -302,9 +277,8 @@ struct BerserkModel : ChessModel {
             QuantizerEntry<int32_t>(&l1->bias.values, quant_two),
             QuantizerEntry<float>(&l2->weights.values, 1.0),
             QuantizerEntry<float>(&l2->bias.values, quant_two),
-            QuantizerEntry<float>(&pos_eval->weights.values, 1.0),
-            QuantizerEntry<float>(&pos_eval->bias.values, quant_two),
-            QuantizerEntry<int32_t>(&psqt_ft->weights.values, quant_two),
+            QuantizerEntry<float>(&cp_eval->weights.values, 1.0),
+            QuantizerEntry<float>(&cp_eval->bias.values, quant_two),
         });
         set_save_frequency(10);
     }
@@ -345,15 +319,13 @@ struct BerserkModel : ChessModel {
         return king_square_index(oK) * 12 * 64 + oP * 64 + oSq;
     }
 
-    void setup_inputs_and_outputs(dataset::DataSet<chess::Position>* positions) {
+    void setup_inputs_and_outputs(dataset::DataSet<chess::Position>* positions, const float lambda) {
         in1->sparse_output.clear();
         in2->sparse_output.clear();
-        psqt1->sparse_output.clear();
-        psqt2->sparse_output.clear();
 
         auto& target = m_loss->target;
 
-#pragma omp parallel for schedule(static) num_threads(8)
+#pragma omp parallel for schedule(static) num_threads(16)
         for (int b = 0; b < positions->header.entry_count; b++) {
             chess::Position* pos = &positions->positions[b];
             // fill in the inputs and target values
@@ -374,13 +346,9 @@ struct BerserkModel : ChessModel {
                 if (pos->m_meta.stm() == chess::WHITE) {
                     in1->sparse_output.set(b, piece_index_white_pov);
                     in2->sparse_output.set(b, piece_index_black_pov);
-                    psqt1->sparse_output.set(b, piece_index_white_pov);
-                    psqt2->sparse_output.set(b, piece_index_black_pov);
                 } else {
                     in2->sparse_output.set(b, piece_index_white_pov);
                     in1->sparse_output.set(b, piece_index_black_pov);
-                    psqt2->sparse_output.set(b, piece_index_white_pov);
-                    psqt1->sparse_output.set(b, piece_index_black_pov);
                 }
 
                 bb = chess::lsb_reset(bb);
@@ -396,11 +364,10 @@ struct BerserkModel : ChessModel {
                 w_value = -w_value;
             }
 
-            float       p_target = 1 / (1 + expf(-p_value * sigmoid_scale));
-            float       w_target = (w_value + 1) / 2.0f;
+            float p_target = 1 / (1 + expf(-p_value * sigmoid_scale));
+            float w_target = (w_value + 1) / 2.0f;
 
-            const float lambda   = 0.5;
-            target(b)            = lambda * p_target + (1.0 - lambda) * w_target;
+            target(b)      = lambda * p_target + (1.0 - lambda) * w_target;
 
             // layer_selector->dense_output.values(b, 0) =
             //     (int) ((chess::popcount(pos->m_occupancy) - 1) / 4);
@@ -415,10 +382,10 @@ int main() {
 
     std::vector<std::string> files {};
     for (int i = 1; i <= 200; i++)
-        files.push_back("C:/Programming/berserk-data/exp204/exp204." + std::to_string(i) + ".bin");
+        files.push_back("C:/Programming/berserk-data/exp203/exp203." + std::to_string(i) + ".bin");
 
     std::vector<std::string> validation_files {};
-    validation_files.push_back("C:/Programming/berserk-data/exp204/validation.bin");
+    validation_files.push_back("C:/Programming/berserk-data/exp203/validation.bin");
 
     const int                             batch_size = 16384;
     dataset::BatchLoader<chess::Position> loader {files, batch_size};
@@ -427,7 +394,7 @@ int main() {
     validation_loader.start();
 
     BerserkModel model {};
-    model.train(loader, validation_loader, 1500, 1e8, 1e7);
+    model.train(loader, validation_loader, 800, 1e8, 1e7);
 
     loader.kill();
     validation_loader.kill();
