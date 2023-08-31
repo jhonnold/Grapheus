@@ -231,28 +231,29 @@ struct BerserkModel : ChessModel {
     BerserkModel()
         : ChessModel() {
 
-        in1           = add<SparseInput>(n_features, 32);
-        in2           = add<SparseInput>(n_features, 32);
-        psqt1         = add<SparseInput>(n_features, 32);
-        psqt2         = add<SparseInput>(n_features, 32);
+        in1                   = add<SparseInput>(n_features, 32);
+        in2                   = add<SparseInput>(n_features, 32);
+        psqt1                 = add<SparseInput>(n_features, 32);
+        psqt2                 = add<SparseInput>(n_features, 32);
 
-        auto ft       = add<FeatureTransformer>(in1, in2, n_ft);
-        auto fta      = add<ClippedRelu>(ft);
+        auto ft               = add<FeatureTransformer>(in1, in2, n_ft);
+        auto fta              = add<ClippedRelu>(ft);
+        ft->ft_regularization = nnue_scale / 68719476736.0;
 
-        auto l1       = add<Affine>(fta, n_l1);
-        auto l1a      = add<ReLU>(l1);
+        auto l1               = add<Affine>(fta, n_l1);
+        auto l1a              = add<ReLU>(l1);
 
-        auto l2       = add<Affine>(l1a, n_l2);
-        auto l2a      = add<ReLU>(l2);
+        auto l2               = add<Affine>(l1a, n_l2);
+        auto l2a              = add<ReLU>(l2);
 
-        auto pos_eval = add<Affine>(l2a, n_out);
+        auto pos_eval         = add<Affine>(l2a, n_out);
 
-        auto psqt_ft  = add<FeatureTransformer>(psqt1, psqt2, 1);
-        auto psqt_sp  = add<Split>(psqt_ft, 1);
-        auto pc_eval  = add<WeightedSum>(&psqt_sp->heads[0], &psqt_sp->heads[1], 0.5, -0.5);
+        auto psqt_ft          = add<FeatureTransformer>(psqt1, psqt2, 1);
+        auto psqt_sp          = add<Split>(psqt_ft, 1);
+        auto pc_eval          = add<WeightedSum>(&psqt_sp->heads[0], &psqt_sp->heads[1], 0.5, -0.5);
 
-        auto cp_eval  = add<WeightedSum>(pos_eval, pc_eval, 1, 1);
-        auto sigmoid  = add<Sigmoid>(cp_eval, sigmoid_scale * nnue_scale);
+        auto cp_eval          = add<WeightedSum>(pos_eval, pc_eval, 1, 1);
+        auto sigmoid          = add<Sigmoid>(cp_eval, sigmoid_scale * nnue_scale);
 
         // ---------------------------------------------------------------------------
         constexpr float piece_val[6] = {60, 375, 395, 615, 1220, 0};
@@ -288,11 +289,11 @@ struct BerserkModel : ChessModel {
                             {OptimizerEntry {&pos_eval->weights}.lr_scalar(10)},
                             {OptimizerEntry {&pos_eval->bias}.lr_scalar(10)},
                             {OptimizerEntry {&psqt_ft->weights}}},
-                           0.9,
+                           0.95,
                            0.999,
                            1e-7));
 
-        set_file_output("C:/Programming/berserk-nets/exp7/");
+        set_file_output("C:/Programming/berserk-nets/exp8/");
 
         add_quantization(Quantizer {
             "" + std::to_string((int) quant_one) + "_" + std::to_string((int) quant_two),
