@@ -255,7 +255,7 @@ struct BerserkModel : ChessModel {
         auto sigmoid  = add<Sigmoid>(cp_eval, sigmoid_scale * nnue_scale);
 
         // ---------------------------------------------------------------------------
-        constexpr float piece_val[6] = {60, 375, 395, 615, 1220, 0};
+        constexpr float piece_val[6] = {100, 318, 348, 554, 1068, 0};
         for (int kingsq = 0; kingsq <= 64; kingsq++) {
             for (int sq = 0; sq <= 64; sq++) {
                 for (int pc = chess::PAWN; pc <= chess::QUEEN; pc++) {
@@ -285,14 +285,14 @@ struct BerserkModel : ChessModel {
                             {OptimizerEntry {&l1->bias}},
                             {OptimizerEntry {&l2->weights}},
                             {OptimizerEntry {&l2->bias}},
-                            {OptimizerEntry {&pos_eval->weights}.lr_scalar(10)},
-                            {OptimizerEntry {&pos_eval->bias}.lr_scalar(10)},
+                            {OptimizerEntry {&pos_eval->weights}},
+                            {OptimizerEntry {&pos_eval->bias}},
                             {OptimizerEntry {&psqt_ft->weights}}},
                            0.9,
                            0.999,
                            1e-7));
 
-        set_file_output("C:/Programming/berserk-nets/exp7/");
+        set_file_output("C:/Programming/berserk-nets/exp10/");
 
         add_quantization(Quantizer {
             "" + std::to_string((int) quant_one) + "_" + std::to_string((int) quant_two),
