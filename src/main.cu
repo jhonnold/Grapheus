@@ -78,8 +78,6 @@ struct ChessModel : nn::Model {
             std::cout << std::endl;
 
             next_epoch(epoch_loss, validation_loss);
-
-            // distribution(validation_loader);
         }
     }
 
@@ -218,8 +216,8 @@ struct BerserkModel : ChessModel {
     SparseInput* psqt2;
 
     const float  sigmoid_scale = 1.0 / 160.0;
-    const float  quant_one     = 127.0;
-    const float  quant_two     = 64.0;
+    const float  quant_one     = 64.0;
+    const float  quant_two     = 32.0;
     const float  nnue_scale    = 600.0;
 
     const size_t n_features    = 16 * 12 * 64;
@@ -237,7 +235,7 @@ struct BerserkModel : ChessModel {
         psqt2         = add<SparseInput>(n_features, 32);
 
         auto ft       = add<FeatureTransformer>(in1, in2, n_ft);
-        auto fta      = add<ClippedRelu>(ft);
+        auto fta      = add<ClippedRelu>(ft, 1.984375); // 127 / quant_one
 
         auto l1       = add<Affine>(fta, n_l1);
         auto l1a      = add<ReLU>(l1);
@@ -255,7 +253,7 @@ struct BerserkModel : ChessModel {
         auto sigmoid  = add<Sigmoid>(cp_eval, sigmoid_scale * nnue_scale);
 
         // ---------------------------------------------------------------------------
-        constexpr float piece_val[6] = {60, 375, 395, 615, 1220, 0};
+        constexpr float piece_val[6] = {100, 318, 348, 554, 1068, 0};
         for (int kingsq = 0; kingsq <= 64; kingsq++) {
             for (int sq = 0; sq <= 64; sq++) {
                 for (int pc = chess::PAWN; pc <= chess::QUEEN; pc++) {
@@ -288,11 +286,11 @@ struct BerserkModel : ChessModel {
                             {OptimizerEntry {&pos_eval->weights}.lr_scalar(10)},
                             {OptimizerEntry {&pos_eval->bias}.lr_scalar(10)},
                             {OptimizerEntry {&psqt_ft->weights}}},
-                           0.9,
+                           0.95,
                            0.999,
                            1e-7));
 
-        set_file_output("C:/Programming/berserk-nets/exp7/");
+        set_file_output("C:/Programming/berserk-nets/exp9/");
 
         add_quantization(Quantizer {
             "" + std::to_string((int) quant_one) + "_" + std::to_string((int) quant_two),
