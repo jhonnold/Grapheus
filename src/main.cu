@@ -214,6 +214,7 @@ struct ChessModel : nn::Model {
 struct BerserkModel : ChessModel {
     SparseInput* in1;
     SparseInput* in2;
+    DenseInput*  layer_sel;
 
     const float  sigmoid_scale = 1.0 / 160.0;
     const float  quant_one     = 64.0;
@@ -224,25 +225,28 @@ struct BerserkModel : ChessModel {
     const size_t n_l1          = 8;
     const size_t n_l2          = 32;
     const size_t n_out         = 1;
+    const size_t n_layers      = 8;
 
     BerserkModel()
         : ChessModel() {
 
         in1                   = add<SparseInput>(n_features, 32);
         in2                   = add<SparseInput>(n_features, 32);
+        layer_sel             = add<DenseInput>(1);
 
         auto ft               = add<FeatureTransformer>(in1, in2, n_ft);
         auto fta              = add<ReLU>(ft);
         ft->ft_regularization = 1.0 / 16384.0 / 4194304.0;
 
-        auto l1               = add<Affine>(fta, n_l1);
+        auto l1               = add<AffineMulti>(fta, n_l1, n_layers);
         auto l1a              = add<ReLU>(l1);
 
-        auto l2               = add<Affine>(l1a, n_l2);
+        auto l2               = add<AffineBatched>(l1a, n_l2 * n_layers, n_layers);
         auto l2a              = add<ReLU>(l2);
 
-        auto pos_eval         = add<Affine>(l2a, n_out);
-        auto sigmoid          = add<Sigmoid>(pos_eval, sigmoid_scale);
+        auto pos_eval         = add<AffineBatched>(l2a, n_out * n_layers, n_layers);
+        auto layer_eval       = add<SelectSingle>(pos_eval, layer_sel, n_layers);
+        auto sigmoid          = add<Sigmoid>(layer_eval, sigmoid_scale);
 
         // Mean power error
         set_loss(MPE {2.5, true});
@@ -332,14 +336,14 @@ struct BerserkModel : ChessModel {
             chess::Square bKingSq = pos->get_king_square<chess::BLACK>();
 
             chess::BB     bb {pos->m_occupancy};
-            int           idx = 0;
+            int           idx   = 0;
 
             while (bb) {
-                chess::Square sq                    = chess::lsb(bb);
-                chess::Piece  pc                    = pos->m_pieces.get_piece(idx);
+                chess::Square sq = chess::lsb(bb);
+                chess::Piece  pc = pos->m_pieces.get_piece(idx);
 
-                auto          piece_index_white_pov = index(sq, pc, wKingSq, chess::WHITE);
-                auto          piece_index_black_pov = index(sq, pc, bKingSq, chess::BLACK);
+                auto piece_index_white_pov = index(sq, pc, wKingSq, chess::WHITE);
+                auto piece_index_black_pov = index(sq, pc, bKingSq, chess::BLACK);
 
                 if (pos->m_meta.stm() == chess::WHITE) {
                     in1->sparse_output.set(b, piece_index_white_pov);
@@ -362,13 +366,13 @@ struct BerserkModel : ChessModel {
                 w_value = -w_value;
             }
 
-            float p_target = 1 / (1 + expf(-p_value * sigmoid_scale));
-            float w_target = (w_value + 1) / 2.0f;
+            float p_target                       = 1 / (1 + expf(-p_value * sigmoid_scale));
+            float w_target                       = (w_value + 1) / 2.0f;
 
-            target(b)      = lambda * p_target + (1.0 - lambda) * w_target;
+            target(b)                            = lambda * p_target + (1.0 - lambda) * w_target;
 
-            // layer_selector->dense_output.values(b, 0) =
-            //     (int) ((chess::popcount(pos->m_occupancy) - 1) / 4);
+            int layer = (chess::popcount(pos->m_occupancy) - 1) / 4;
+            layer_sel->dense_output.values(b, 0) = layer;
         }
     }
 };
