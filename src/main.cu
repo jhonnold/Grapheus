@@ -209,7 +209,7 @@ struct KoiModel : ChessModel {
 
         auto ft = add<FeatureTransformer>(in1, in2, 512);
         auto re = add<ReLU>(ft);
-        auto af = add<Affine>(re, 1);
+        auto af = add<Affine>(re, 2);
         auto sm = add<Sigmoid>(af, 2.5 / 400);
 
         set_loss(MPE {2.5, false});
