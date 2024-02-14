@@ -1,4 +1,3 @@
-
 #pragma once
 
 #include "../data/matrix_dense.h"

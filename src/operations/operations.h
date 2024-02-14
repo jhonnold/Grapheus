@@ -15,6 +15,8 @@
 #include "crelu/crelu_bp.h"
 #include "distribute/distribute.h"
 #include "distribute/distribute_bp.h"
+#include "elemwise_mul/elemwise_mul.h"
+#include "elemwise_mul/elemwise_mul_bp.h"
 #include "lrelu/lrelu.h"
 #include "lrelu/lrelu_bp.h"
 #include "mean_power_error/mpe.h"
