@@ -10,6 +10,9 @@
 #include "operations/operations.h"
 
 #include <fstream>
+#include <limits>
+
+namespace fs = std::filesystem;
 
 using namespace nn;
 using namespace data;
@@ -30,11 +33,8 @@ struct ChessModel : nn::Model {
         this->compile(loader.batch_size);
 
         Timer t {};
-        for (int i = 0; i < epochs; i++) {
+        for (int i = 1; i <= epochs; i++) {
             t.start();
-            size_t prev_duration = 0;
-            float  batch_loss    = 0;
-            float  epoch_loss    = 0;
 
             uint64_t prev_print_tm    = 0;
             float    total_epoch_loss = 0;
@@ -43,29 +43,25 @@ struct ChessModel : nn::Model {
                 auto* ds = loader.next();
                 setup_inputs_and_outputs(ds);
 
-                // print score of last iteration
-                if (b > 0) {
-                    batch_loss = loss_of_last_batch();
-                    epoch_loss += batch_loss;
-                }
+                float batch_loss = batch();
+                total_epoch_loss += batch_loss;
+                float epoch_loss = total_epoch_loss / b;
 
                 t.stop();
-                if (b > 0
-                    && (b == (epoch_size / loader.batch_size) - 1
-                        || t.elapsed() - prev_duration > 1000)) {
-                    prev_duration = t.elapsed();
+                uint64_t elapsed = t.elapsed();
+                if (elapsed - prev_print_tm > 1000 || b == epoch_size / loader.batch_size) {
+                    prev_print_tm = elapsed;
 
-                    printf("\rep/ba = [%3d/%5d], ", i, b);
-                    printf("batch_loss = [%1.8f], ", batch_loss);
-                    printf("epoch_loss = [%1.8f], ", epoch_loss / b);
-                    printf("speed = [%9d pos/s], ",
-                           (int) round(1000.0f * loader.batch_size * b / t.elapsed()));
-                    printf("time = [%3ds]", (int) t.elapsed() / 1000);
+                    printf("\rep = [%4d], epoch_loss = [%1.8f], batch = [%5d], batch_loss = [%1.8f], "
+                           "speed = [%7.2f it/s], time = [%3ds]",
+                           i,
+                           epoch_loss,
+                           b,
+                           batch_loss,
+                           1000.0f * b / elapsed,
+                           (int) (elapsed / 1000.0f));
                     std::cout << std::flush;
                 }
-
-                // start training of new batch
-                batch();
             }
 
             std::cout << std::endl;
@@ -75,11 +71,11 @@ struct ChessModel : nn::Model {
         }
     }
 
-    void test_fen(const std::string& fen){
+    void test_fen(const std::string& fen) {
         this->compile(1);
 
-        chess::Position pos = chess::parse_fen(fen);
-        dataset::DataSet<chess::Position> ds{};
+        chess::Position                   pos = chess::parse_fen(fen);
+        dataset::DataSet<chess::Position> ds {};
         ds.positions.push_back(pos);
         ds.header.entry_count = 1;
 
@@ -92,37 +88,42 @@ struct ChessModel : nn::Model {
 
         // go through the layers and download values
 
-        std::cout << "==================================================================================\n";
+        std::cout
+            << "==================================================================================\n";
         std::cout << "testing fen: " << fen << std::endl;
 
         int idx = 0;
-        for(auto layer:m_layers){
+        for (auto layer : m_layers) {
             layer->dense_output.values >> CPU;
 
             std::cout << "LAYER " << ++idx << std::endl;
-            for(int i = 0; i < std::min((size_t)16, layer->size); i++){
+            for (int i = 0; i < std::min((size_t) 16, layer->size); i++) {
                 std::cout << std::setw(10) << layer->dense_output.values(i, 0);
             }
-            if(layer->size > 16){
+            if (layer->size > 16) {
                 std::cout << " ......... " << layer->dense_output.values(layer->size - 1, 0);
             }
             std::cout << "\n";
         }
     }
 
-    void distribution(dataset::BatchLoader<chess::Position>& loader, int batches = 32){
+    void distribution(dataset::BatchLoader<chess::Position>& loader, int batches = 32) {
         this->compile(loader.batch_size);
 
-        std::vector<DenseMatrix<float>> max_values{};
-        std::vector<DenseMatrix<float>> min_values{};
+        std::vector<DenseMatrix<float>>            max_values {};
+        std::vector<DenseMatrix<float>>            min_values {};
+        std::vector<std::pair<uint64_t, uint64_t>> sparsity {};
 
-        for(auto l:m_layers){
+        for (auto l : m_layers) {
             max_values.emplace_back(l->dense_output.values.m, 1);
             min_values.emplace_back(l->dense_output.values.m, 1);
             max_values.back().malloc<data::CPU>();
             min_values.back().malloc<data::CPU>();
-            math::uniform(max_values.back(), -1000000.0f, -1000000.0f);
-            math::uniform(min_values.back(),  1000000.0f,  1000000.0f);
+
+            math::fill<float>(max_values.back(), -std::numeric_limits<float>::max());
+            math::fill<float>(min_values.back(), std::numeric_limits<float>::max());
+
+            sparsity.push_back(std::pair(0, 0));
         }
 
         for (int b = 0; b < batches; b++) {
@@ -133,79 +134,87 @@ struct ChessModel : nn::Model {
             std::cout << "\r" << b << " / " << batches << std::flush;
 
             // get minimum and maximum values
-            for(int i = 0; i < m_layers.size(); i++) {
+            for (int i = 0; i < m_layers.size(); i++) {
                 auto layer = m_layers[i].get();
                 layer->dense_output.values >> data::CPU;
-                for(int m =0; m < layer->dense_output.values.m; m++){
-                    for(int n =0; n < layer->dense_output.values.n; n++){
-                        max_values[i](m,0) = std::max(max_values[i](m,0),  layer->dense_output.values(m,n));
-                        min_values[i](m,0) = std::min(min_values[i](m,0),  layer->dense_output.values(m,n));
+                for (int m = 0; m < layer->dense_output.values.m; m++) {
+                    for (int n = 0; n < layer->dense_output.values.n; n++) {
+                        max_values[i](m, 0) =
+                            std::max(max_values[i](m, 0), layer->dense_output.values(m, n));
+                        min_values[i](m, 0) =
+                            std::min(min_values[i](m, 0), layer->dense_output.values(m, n));
+
+                        sparsity[i].first++;
+                        sparsity[i].second += (layer->dense_output.values(m, n) > 0);
                     }
                 }
             }
         }
         std::cout << std::endl;
 
-
-        for(int i = 0; i < m_layers.size(); i++) {
-            std::cout << "------------ LAYER " << i+1 << " --------------------" << std::endl;
+        for (int i = 0; i < m_layers.size(); i++) {
+            std::cout << "------------ LAYER " << i + 1 << " --------------------" << std::endl;
             std::cout << "min: ";
-            for(int j = 0; j < std::min((size_t)16, min_values[i].size()); j++){
+            for (int j = 0; j < std::min((size_t) 16, min_values[i].size()); j++) {
                 std::cout << std::setw(10) << min_values[i](j);
             }
-            if(min_values[i].size() > 16){
-                std::cout << " ......... " << min_values[i](min_values.size()-1);
+            if (min_values[i].size() > 16) {
+                std::cout << " ......... " << min_values[i](min_values.size() - 1);
             }
             std::cout << "\n";
 
             std::cout << "max: ";
-            for(int j = 0; j < std::min((size_t)16, max_values[i].size()); j++){
+            for (int j = 0; j < std::min((size_t) 16, max_values[i].size()); j++) {
                 std::cout << std::setw(10) << max_values[i](j);
             }
-            if(max_values[i].size() > 16){
-                std::cout << " ......... " << max_values[i](max_values.size()-1);
+            if (max_values[i].size() > 16) {
+                std::cout << " ......... " << max_values[i](max_values.size() - 1);
             }
 
             std::cout << "\n";
-            float min =  10000000;
+            float min = 10000000;
             float max = -10000000;
-            for(int m =0; m < min_values.size(); m++){
+            for (int m = 0; m < min_values.size(); m++) {
                 min = std::min(min, min_values[i](m));
                 max = std::max(max, max_values[i](m));
             }
             std::cout << "output bounds: [" << min << " ; " << max << "]\n";
 
-
             int died = 0;
-            for(int j = 0; j < max_values[i].size(); j++){
-                if(std::abs(max_values[i](j) - min_values[i](j)) < 1e-8){
-                    died ++;
+            for (int j = 0; j < max_values[i].size(); j++) {
+                if (std::abs(max_values[i](j) - min_values[i](j)) < 1e-8) {
+                    died++;
                 }
             }
 
             std::cout << "died: " << died << " / " << max_values[i].size();
             std::cout << "\n";
 
-            for(auto p : m_layers[i]->params()){
-                float min =  10000000;
+            float sparsity_total  = sparsity[i].first;
+            float sparsity_active = sparsity[i].second;
+
+            std::cout << "sparsity: " << sparsity_active / sparsity_total;
+            std::cout << "\n";
+
+            for (auto p : m_layers[i]->params()) {
+                float min = 10000000;
                 float max = -10000000;
-                for(int m =0; m < p->values.m; m++){
-                    for(int n =0; n < p->values.n; n++){
-                        min = std::min(min, p->values(m,n));
-                        max = std::max(max, p->values(m,n));
+                for (int m = 0; m < p->values.m; m++) {
+                    for (int n = 0; n < p->values.n; n++) {
+                        min = std::min(min, p->values(m, n));
+                        max = std::max(max, p->values(m, n));
                     }
                 }
 
                 std::cout << "param bounds: [" << min << " ; " << max << "]\n";
             }
-
         }
-
     }
 };
 
 struct BerserkModel : ChessModel {
-    static constexpr int THREADS = 16;    // threads to use on the cpu
+    SparseInput* in1;
+    SparseInput* in2;
 
     const float  sigmoid_scale = 1.0 / 160.0;
     const float  quant         = 32.0;
@@ -266,20 +275,17 @@ struct BerserkModel : ChessModel {
         });
     }
 
-    inline int king_square_index(chess::Square relative_king_square) {
-
-        // clang-format off
-        constexpr int indices[chess::N_SQUARES] {
-            0,  1,  2,  3,  3,  2,  1,  0,
-            4,  5,  6,  7,  7,  6,  5,  4,
-            8,  9,  10, 11, 11, 10, 9,  8,
-            8,  9,  10, 11, 11, 10, 9,  8,
-            12, 12, 13, 13, 13, 13, 12, 12,
-            12, 12, 13, 13, 13, 13, 12, 12,
-            14, 14, 15, 15, 15, 15, 14, 14,
-            14, 14, 15, 15, 15, 15, 14, 14,
+    inline int king_square_index(int relative_king_square) {
+        constexpr int indices[64] {
+            -1, -1, -1, -1, 14, 14, 15, 15,    //
+            -1, -1, -1, -1, 14, 14, 15, 15,    //
+            -1, -1, -1, -1, 12, 12, 13, 13,    //
+            -1, -1, -1, -1, 12, 12, 13, 13,    //
+            -1, -1, -1, -1, 8,  9,  10, 11,    //
+            -1, -1, -1, -1, 8,  9,  10, 11,    //
+            -1, -1, -1, -1, 4,  5,  6,  7,     //
+            -1, -1, -1, -1, 0,  1,  2,  3,     //
         };
-        // clang-format on
 
         return indices[relative_king_square];
     }
@@ -288,29 +294,18 @@ struct BerserkModel : ChessModel {
                      chess::Piece  piece,
                      chess::Square king_square,
                      chess::Color  view) {
-        constexpr int          PIECE_TYPE_FACTOR  = 64;
-        constexpr int          PIECE_COLOR_FACTOR = PIECE_TYPE_FACTOR * 6;
-        constexpr int          KING_SQUARE_FACTOR = PIECE_COLOR_FACTOR * 2;
 
-        const chess::PieceType piece_type         = chess::type_of(piece);
-        const chess::Color     piece_color        = chess::color_of(piece);
+        const chess::PieceType piece_type  = chess::type_of(piece);
+        const chess::Color     piece_color = chess::color_of(piece);
 
-        chess::Square          relative_king_square;
-        chess::Square          relative_piece_square;
+        piece_square ^= 56;
+        king_square ^= 56;
 
         const int oP  = piece_type + 6 * (piece_color != view);
         const int oK  = (7 * !(king_square & 4)) ^ (56 * view) ^ king_square;
         const int oSq = (7 * !(king_square & 4)) ^ (56 * view) ^ piece_square;
 
-        const int king_square_idx = king_square_index(relative_king_square);
-        if (chess::file_index(king_square) > 3) {
-            relative_piece_square = chess::mirror_hor(relative_piece_square);
-        }
-
-        const int index = relative_piece_square + piece_type * PIECE_TYPE_FACTOR
-                          + (piece_color == view) * PIECE_COLOR_FACTOR
-                          + king_square_idx * KING_SQUARE_FACTOR;
-        return index;
+        return king_square_index(oK) * 12 * 64 + oP * 64 + oSq;
     }
 
     void setup_inputs_and_outputs(dataset::DataSet<chess::Position>* positions) {
@@ -358,7 +353,7 @@ struct BerserkModel : ChessModel {
                 w_value = -w_value;
             }
 
-            float p_target = 1 / (1 + expf(-p_value * 2.5 / 400));
+            float p_target = 1 / (1 + expf(-p_value * sigmoid_scale));
             float w_target = (w_value + 1) / 2.0f;
 
             target(b)      = lambda * p_target + (1.0 - lambda) * w_target;
