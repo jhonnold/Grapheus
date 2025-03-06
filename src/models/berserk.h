@@ -27,10 +27,12 @@ struct BerserkModel : ChessModel {
 
         auto ft                = add<FeatureTransformer>(in1, in2, n_ft);
         auto fta               = add<ClippedRelu>(ft);
+        auto ftc               = add<ChunkwiseMul>(fta, 4);
+        auto ftl               = add<Linear>(ftc, 1.0 / 128.0);
         ft->ft_regularization  = 1.0 / 16384.0 / 4194304.0;
         fta->max               = 127.0;
 
-        auto        l1         = add<Affine>(fta, n_l1);
+        auto        l1         = add<Affine>(ftl, n_l1);
         auto        l1a        = add<ReLU>(l1);
 
         auto        l2         = add<Affine>(l1a, n_l2);
