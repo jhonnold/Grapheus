@@ -10,9 +10,11 @@ struct BerserkModel : ChessModel {
     SparseInput* in2;
 
     const float  sigmoid_scale = 1.0 / 160.0;
-    const float  quant_one     = 32.0;
-    const float  quant_two     = 32.0;
-    const float  quant_three   = 32.0;
+    const float  output_scalar = 600.0;
+
+    const float  quant_one     = 127.0;
+    const float  quant_hidden  = 32.0;
+    const float  quant_out     = 16.0;
 
     const size_t n_features    = 16 * 12 * 64;
     const size_t n_l1          = 16;
@@ -27,8 +29,7 @@ struct BerserkModel : ChessModel {
 
         auto ft                = add<FeatureTransformer>(in1, in2, n_ft);
         auto fta               = add<ClippedRelu>(ft);
-        ft->ft_regularization  = 1.0 / 16384.0 / 4194304.0;
-        fta->max               = 127.0;
+        ft->ft_regularization  = 60.0 / 16384.0 / 4194304.0;
 
         auto        l1         = add<Affine>(fta, n_l1);
         auto        l1a        = add<ReLU>(l1);
@@ -37,11 +38,11 @@ struct BerserkModel : ChessModel {
         auto        l2a        = add<ReLU>(l2);
 
         auto        pos_eval   = add<Affine>(l2a, n_out);
-        auto        sigmoid    = add<Sigmoid>(pos_eval, sigmoid_scale);
+        auto        sigmoid    = add<Sigmoid>(pos_eval, output_scalar * sigmoid_scale);
 
-        const float hidden_max = 127.0 / quant_two;
-        add_optimizer(AdamWarmup({{OptimizerEntry {&ft->weights}},
-                                  {OptimizerEntry {&ft->bias}},
+        const float hidden_max = 127.0 / quant_hidden;
+        add_optimizer(AdamWarmup({{OptimizerEntry {&ft->weights}.lr_scalar(1.0 / 60.0)},
+                                  {OptimizerEntry {&ft->bias}.lr_scalar(1.0 / 60.0)},
                                   {OptimizerEntry {&l1->weights}.clamp(-hidden_max, hidden_max)},
                                   {OptimizerEntry {&l1->bias}},
                                   {OptimizerEntry {&l2->weights}},
@@ -59,12 +60,12 @@ struct BerserkModel : ChessModel {
             save_rate,
             QuantizerEntry<int16_t>(&ft->weights.values, quant_one, true),
             QuantizerEntry<int16_t>(&ft->bias.values, quant_one),
-            QuantizerEntry<int8_t>(&l1->weights.values, quant_two),
-            QuantizerEntry<int32_t>(&l1->bias.values, quant_two),
-            QuantizerEntry<int16_t>(&l2->weights.values, quant_three),
-            QuantizerEntry<int32_t>(&l2->bias.values, quant_three),
-            QuantizerEntry<int16_t>(&pos_eval->weights.values, quant_three),
-            QuantizerEntry<int32_t>(&pos_eval->bias.values, quant_three),
+            QuantizerEntry<int8_t>(&l1->weights.values, quant_hidden),
+            QuantizerEntry<int32_t>(&l1->bias.values, quant_one * quant_hidden),
+            QuantizerEntry<int16_t>(&l2->weights.values, quant_hidden),
+            QuantizerEntry<int32_t>(&l2->bias.values, quant_one * quant_hidden),
+            QuantizerEntry<int16_t>(&pos_eval->weights.values, output_scalar * quant_out / quant_one),
+            QuantizerEntry<int32_t>(&pos_eval->bias.values, output_scalar * quant_out),
         });
     }
 
