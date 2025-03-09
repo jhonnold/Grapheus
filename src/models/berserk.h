@@ -29,7 +29,7 @@ struct BerserkModel : ChessModel {
 
         auto ft                = add<FeatureTransformer>(in1, in2, n_ft);
         auto fta               = add<ClippedRelu>(ft);
-        ft->ft_regularization  = 60.0 / 16384.0 / 4194304.0;
+        ft->ft_regularization  = output_scalar / 16384.0 / 4194304.0;
 
         auto        l1         = add<Affine>(fta, n_l1);
         auto        l1a        = add<ReLU>(l1);
@@ -41,8 +41,8 @@ struct BerserkModel : ChessModel {
         auto        sigmoid    = add<Sigmoid>(pos_eval, output_scalar * sigmoid_scale);
 
         const float hidden_max = 127.0 / quant_hidden;
-        add_optimizer(AdamWarmup({{OptimizerEntry {&ft->weights}.lr_scalar(1.0 / 60.0)},
-                                  {OptimizerEntry {&ft->bias}.lr_scalar(1.0 / 60.0)},
+        add_optimizer(AdamWarmup({{OptimizerEntry {&ft->weights}.lr_scalar(1.0 / output_scalar)},
+                                  {OptimizerEntry {&ft->bias}.lr_scalar(1.0 / output_scalar)},
                                   {OptimizerEntry {&l1->weights}.clamp(-hidden_max, hidden_max)},
                                   {OptimizerEntry {&l1->bias}},
                                   {OptimizerEntry {&l2->weights}},
