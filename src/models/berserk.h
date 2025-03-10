@@ -40,6 +40,10 @@ struct BerserkModel : ChessModel {
         auto        pos_eval   = add<Affine>(l2a, n_out);
         auto        sigmoid    = add<Sigmoid>(pos_eval, output_scalar * sigmoid_scale);
 
+        for (size_t i = 0; i < ft->weights.values.size(); i++)
+            ft->weights.values[i] /= output_scalar;
+        ft->weights.values >> data::GPU;
+
         const float hidden_max = 127.0 / quant_hidden;
         add_optimizer(AdamWarmup({{OptimizerEntry {&ft->weights}.lr_scalar(1.0 / output_scalar)},
                                   {OptimizerEntry {&ft->bias}.lr_scalar(1.0 / output_scalar)},

@@ -34,8 +34,8 @@ struct FeatureTransformer : public Layer {
         bias = Tape(size / 2, 1);
         bias.malloc();
 
-        math::uniform<float>(weights.values, -1.0 / std::sqrt(inp1->size), 1.0 / std::sqrt(inp1->size));
-        // math::kaiming<float>(weights.values, inp1->max_inputs);
+        // math::uniform<float>(weights.values, -1.0 / std::sqrt(inp1->size), 1.0 / std::sqrt(inp1->size));
+        math::kaiming<float>(weights.values, inp1->max_inputs);
         math::fill<float>(bias.values, 0.0);
 
         weights.values >> data::GPU;
