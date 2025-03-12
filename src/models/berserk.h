@@ -15,7 +15,7 @@ struct BerserkModel : ChessModel {
     const float  quant_three   = 32.0;
 
     const size_t n_features    = 16 * 12 * 64;
-    const size_t n_l1          = 16;
+    const size_t n_l1          = 32;
     const size_t n_l2          = 32;
     const size_t n_out         = 1;
 
